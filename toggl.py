@@ -565,7 +565,9 @@ class TimeEntry(object):
         if project_name is not None:
             project = ProjectList(workspace_name).find_by_name(project_name)
             if project == None:
-                raise RuntimeError("Project '%s' not found." % project_name)
+                project = Project(name=project_name)
+                project.add()
+
             self.data['pid'] = project['id']
 
         if duration is not None:
@@ -727,6 +729,21 @@ class TimeEntry(object):
 
         toggl("%s/time_entries/%d" % (TOGGL_URL, self.get('id')), 'put', self.json())
 
+    def update(self, description=None, project_name=None):
+        if project_name is not None:
+            project = ProjectList().find_by_name(project_name)
+            if project == None:
+                project = Project(name=project_name)
+                project.add()
+                self.data['pid'] = project.id
+            else:
+                self.data['pid'] = project['id']
+
+        if description is not None:
+            self.data['description'] = description
+
+        toggl("%s/time_entries/%d" % (TOGGL_URL, self.get('id')), 'put', self.json())
+
     def __str__(self):
         """
         Returns a human-friendly string representation of this time entry.
@@ -810,12 +827,12 @@ class TimeEntryList(object):
         return None
 
     def get_latest(self):
-    	"""
-    	Returns the latest entry
-    	"""
-    	if len(self.time_entries) == 0:
-    		return None
-    	return self.time_entries[len(self.time_entries)-1]
+        """
+        Returns the latest entry
+        """
+        if len(self.time_entries) == 0:
+            return None
+        return self.time_entries[len(self.time_entries)-1]
 
     def next(self):
         """
@@ -912,6 +929,34 @@ class User(object):
         documented at https://github.com/toggl/toggl_api_docs/blob/master/chapters/users.md
         """
         return self.data[prop]
+
+# ----------------------------------------------------------------------------
+# Project
+# ----------------------------------------------------------------------------
+class Project(object):
+    def __init__(self, name=None, wid=None, color=None):
+
+        self.data = {}
+        self.id = None
+
+        if name is not None:
+            self.data['name'] = name
+        if wid is not None:
+            self.data['wid'] = wid
+        else:
+            self.data['wid'] = User().get('default_wid')
+        if color is not None:
+            self.data['color'] = color
+
+    def add(self):
+        kvs = json.loads(toggl("%s/projects" % TOGGL_URL, "post", self.json()))
+        self.id = kvs['data']['id']
+
+    def json(self):
+        """
+        Returns a JSON dump of this entire object as toggl payload.
+        """
+        return '{"project": %s}' % json.dumps(self.data)
 
 #############################################################################
 #     ____                                          _   _     _            
@@ -1055,6 +1100,8 @@ class CLI(object):
             self._stop_time_entry(self.args[1:])
         elif self.args[0] == "www":
             os.system(VISIT_WWW_COMMAND)
+        elif self.args[0] == "update":
+            self._update_current_time_entry(self.args[1:])
         elif self.args[0] == "workspaces":
             print(WorkspaceList())
         else:
@@ -1260,6 +1307,17 @@ class CLI(object):
             Logger.info('%s stopped at %s' % (entry.get('description'), friendly_time))
         else:
             Logger.info("You're not working on anything right now.")
+
+    def _update_current_time_entry(self, args):
+        entry = TimeEntryList().now()
+        if entry != None:
+            description = self._get_str_arg(args, optional=True)
+            project_name = self._get_project_arg(args, optional=True)
+            if description[0] == '@':
+                project_name = self._get_project_arg([description], optional=True)
+                description = None
+
+            entry.update(description=description, project_name=project_name)
 
 if __name__ == "__main__":
     CLI().act()
